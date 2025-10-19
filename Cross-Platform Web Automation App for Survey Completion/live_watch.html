@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Survey Watch Mode</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .main-content {
+            flex-grow: 1;
+        }
+        .sidebar {
+            width: 300px;
+        }
+        .card {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        #survey-viewer {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            position: relative;
+        }
+        #survey-iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 0, 0.2);
+            border: 2px solid yellow;
+            box-sizing: border-box;
+            pointer-events: none; /* Allows clicking through the overlay */
+        }
+        #confidence-meter {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #confidence-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #4caf50;
+            transition: width 0.5s;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #logs {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Survey Watch Mode</h1>
+    <div class="container">
+        <div class="main-content">
+            <div class="card">
+                <h2>Survey Viewer</h2>
+                <div id="survey-viewer">
+                    <iframe id="survey-iframe" src="about:blank"></iframe>
+                    <!-- Overlays will be dynamically added here -->
+                </div>
+            </div>
+        </div>
+        <div class="sidebar">
+            <div class="card">
+                <h2>Control Panel</h2>
+                <div id="manual-override-panel">
+                    <div class="button-group">
+                        <button id="pause-btn">Pause</button>
+                        <button id="resume-btn">Resume</button>
+                    </div>
+                    <div class="button-group">
+                        <button id="skip-btn">Skip Question</button>
+                        <button id="submit-btn">Submit Manually</button>
+                    </div>
+                    <div id="edit-response-section" style="margin-top: 20px;">
+                        <label for="response-input">Edit Response:</label>
+                        <input type="text" id="response-input" style="width: 100%; margin-top: 5px;">
+                        <button id="edit-btn" style="margin-top: 10px;">Submit Edit</button>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Agent Decision</h2>
+                <p><strong>Agent:</strong> <span id="agent-id">N/A</span></p>
+                <p><strong>Selected Answer:</strong> <span id="selected-answer">N/A</span></p>
+                <p><strong>Confidence:</strong></p>
+                <div id="confidence-meter">
+                    <div id="confidence-bar"></div>
+                </div>
+                <p><span id="confidence-value">0%</span></p>
+            </div>
+            <div class="card">
+                <h2>Agent Logs</h2>
+                <div id="logs"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const surveyIframe = document.getElementById('survey-iframe');
+            const agentIdSpan = document.getElementById('agent-id');
+            const selectedAnswerSpan = document.getElementById('selected-answer');
+            const confidenceBar = document.getElementById('confidence-bar');
+            const confidenceValue = document.getElementById('confidence-value');
+            const logsDiv = document.getElementById('logs');
+
+            const pauseBtn = document.getElementById('pause-btn');
+            const resumeBtn = document.getElementById('resume-btn');
+            const skipBtn = document.getElementById('skip-btn');
+            const submitBtn = document.getElementById('submit-btn');
+            const editBtn = document.getElementById('edit-btn');
+            const responseInput = document.getElementById('response-input');
+
+            const eventSource = new EventSource('/live/live_state');
+
+            eventSource.onmessage = (event) => {
+                const state = JSON.parse(event.data);
+                updateUI(state);
+            };
+
+            eventSource.onerror = (error) => {
+                console.error("EventSource failed:", error);
+                eventSource.close();
+            };
+
+            function updateUI(state) {
+                surveyIframe.src = state.url;
+                
+                if (state.agent_decision) {
+                    agentIdSpan.textContent = state.agent_decision.agent_id;
+                    selectedAnswerSpan.textContent = state.agent_decision.selected_answer;
+                    const confidence = state.agent_decision.confidence * 100;
+                    confidenceBar.style.width = `${confidence}%`;
+                    confidenceValue.textContent = `${confidence.toFixed(2)}%`;
+                }
+
+                if (state.log_messages) {
+                    logsDiv.innerHTML = state.log_messages.join('<br>');
+                }
+            }
+
+            async function sendOverride(data) {
+                try {
+                    const response = await fetch('/live/manual_override', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    if (!response.ok) {
+                        console.error("Failed to send override:", await response.json());
+                    }
+                } catch (error) {
+                    console.error("Error sending override:", error);
+                }
+            }
+
+            pauseBtn.addEventListener('click', () => sendOverride({ action: 'pause' }));
+            resumeBtn.addEventListener('click', () => sendOverride({ action: 'resume' }));
+            skipBtn.addEventListener('click', () => sendOverride({ action: 'skip' }));
+            submitBtn.addEventListener('click', () => sendOverride({ action: 'submit_manually' }));
+            editBtn.addEventListener('click', () => {
+                const newAnswer = responseInput.value;
+                if (newAnswer) {
+                    sendOverride({ selected_answer: newAnswer });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
